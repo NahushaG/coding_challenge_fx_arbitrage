@@ -1,4 +1,4 @@
-# coding challenge activity
+#coding challenge activity.
 ================================
 Current code challenges contain following task.
 1. Updation of currency orderbook
@@ -7,14 +7,15 @@ Current code challenges contain following task.
 
 All the code implementation are within the customcode implementation. The other two were already provided as part for price generation.
 
-Code implementation are divided into two part 
+Code implementation is divided into two part 
 1. An aysnc task which updates the orderbook 
-   - Updated resepective fx orderbook for add/delete/modify
-   - Update best sell and best buy for that currency
+   - Updated resepective fx orderbook for add/delete/modify.
+   - Update best sell and best buy for that currency.
 2. Followup task that on update fetches the updated value and checks for arbitrage oppurntunity and if found print it
-  - Create graph for all available orderbook using their best buy and sell
-  - Use Bellman Ford Algo to find arbitrage oppurtunity 
-  - Print respective CurrencyPair along with the aribitrage factor
+   - Create graph for all available orderbook using their best buy and sell.
+   - Use Bellman Ford Algo to find arbitrage oppurtunity .
+   - Print respective CurrencyPair along with the aribitrage factor.
+  
 
 For finding the arbitrage oppurtunity the bellman ford algorithm is used below is algorith psedo code -
 1. Build graph using all the available currency book ( Thresold for number of available order book is > 2)
