@@ -4,18 +4,17 @@ import com.estar.arbitrage.ArbitragePrinter;
 import com.estar.arbitrage.ArbitrageProcessor;
 import com.estar.arbitrage.ResultFormatter;
 import com.estar.customcode.algo.*;
-import com.estar.customcode.exceptions.ProcessException;
 import com.estar.orderbook.model.CurrencyPair;
 import com.estar.orderbook.model.OrderbookListener;
 import com.estar.orderbook.model.Price;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.*;
-import java.util.function.Supplier;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * @Author Nahusha Ganiga
@@ -26,15 +25,17 @@ import java.util.function.Supplier;
  * 2. Calls the bellman ford algo to find the negative path and then calculate the negative path weight
  * to evaluate the arbitrage factor
  */
-public class ManageOrderBook implements OrderbookListener {
+public class ManageOrderBook_old_code implements OrderbookListener {
 
     private final Map<CurrencyPair, OrderBook> currencyPairOrderBookMap;
     private final AlgoRunner algoRunner;
 
-    private ResultFormatter resultFormatter;
-    private static Logger LOG = LoggerFactory.getLogger(ManageOrderBook.class);
 
-    public ManageOrderBook() {
+    private Map<CurrencyPair, BigDecimal[]> bestValueCurrencyMatrix = new HashMap<>();
+
+    private ResultFormatter resultFormatter;
+
+    public ManageOrderBook_old_code() {
         currencyPairOrderBookMap = buildOrderBookMapForAvailableCurrencyPair();
         AdjacentVertexMapBuilder adjacentVertexMapBuilder = new AdjacentVertexMapBuilder();
         CurrencyPairGraphBuilder currencyPairGraphBuilder = new CurrencyPairGraphBuilder(adjacentVertexMapBuilder);
@@ -50,50 +51,33 @@ public class ManageOrderBook implements OrderbookListener {
 
     /**
      * listens for update order action, runs two async task
-     * 1. Updates the order book based on the action (ADD, MODIFY, INSERT). It also evaluates best buy
-     * 2. Once the update task is done then it detect for Arbitrage cycle and then compute the arbitrage factor
-     * and prints instrument and factor.
+     *  1. Updates the order book based on the action (ADD, MODIFY, INSERT). It also evaluates best buy
+     *  2. Once the update task is done then it detect for Arbitrage cycle and then compute the arbitrage factor
+     *     and prints instrument and factor.
      * The check will done only if there are more than 2 currency pair
-     *
      * @param action
      * @param price
      */
     @Override
     public void handlePriceUpdate(Action action, Price price) {
-        int core_count = Runtime.getRuntime().availableProcessors();
-        ExecutorService executorService = Executors.newFixedThreadPool(core_count);
-        updateOrderBook(action, price);
-        CompletableFuture.supplyAsync(updateOrderBook(action, price), executorService)
-                .thenApplyAsync(orderBooks -> updateBestBuyMatrix(orderBooks))
-                .thenAccept(bestPriceMatrix -> trackArbitrageOpportunity(bestPriceMatrix))
-                .exceptionally(throwable -> {
-                    LOG.info("Can not get build bestBuy");
-                    return null;
-                });
-        executorService.shutdown();
-    }
-
-    private Supplier<Map<CurrencyPair, OrderBook>> updateOrderBook(Action action, Price price) {
-        CurrencyPair currencyPair = price.instrument();
-        OrderBook currencyOrderBook = currencyPairOrderBookMap.get(currencyPair);
-        currencyOrderBook.manageOrder(action, price);
-        return () -> currencyPairOrderBookMap;
-    }
-
-
-    private Map<CurrencyPair, BigDecimal[]> updateBestBuyMatrix(Map<CurrencyPair, OrderBook> orderBooks) throws CompletionException {
-        Map<CurrencyPair, BigDecimal[]> bestBuyMatrix = new HashMap<>();
-        if (orderBooks.size() > 2) {
-            for (Map.Entry<CurrencyPair, OrderBook> entry : orderBooks.entrySet()) {
-                OrderBook orderBook = entry.getValue();
-                BigDecimal bestBuy[] = new BigDecimal[]{orderBook.getBestBuy().price(), orderBook.getBestSell().price()};
-                bestBuyMatrix.put(entry.getKey(), bestBuy);
+        ExecutorService executorService = Executors.newFixedThreadPool(20);
+        CompletableFuture<Void> manageOrderBook = CompletableFuture.runAsync(() -> {  // Aysnc task
+            CurrencyPair currencyPair = price.instrument();
+            OrderBook currencyOrderBook = currencyPairOrderBookMap.get(currencyPair);
+            currencyOrderBook.manageOrder(action, price);
+        }, executorService).thenRun(() -> {                                           //Since we have the object via map we only used thenRun()
+            CurrencyPair currencyPair = price.instrument();
+            OrderBook currencyOrderBook = currencyPairOrderBookMap.get(currencyPair);
+            BigDecimal values[] = new BigDecimal[2];
+            values[0] = currencyOrderBook.getBestBuy().price();
+            values[1] = currencyOrderBook.getBestBuy().price();
+            bestValueCurrencyMatrix.put(currencyPair, values);
+            if (currencyPairOrderBookMap.size() > 2) {
+                trackArbitrageOpportunity();  //Arbitrage check is called only if 3 or more currency pair
             }
+        });
 
-            return bestBuyMatrix;
-        } else {
-            throw new ProcessException("Best Buy Matrix can be generated");
-        }
+        executorService.shutdown();
     }
 
     /**
@@ -114,8 +98,15 @@ public class ManageOrderBook implements OrderbookListener {
     /**
      * Call to Bellman ford algorithm and if arbitrage cycle present than print the result
      */
-    private void trackArbitrageOpportunity(Map<CurrencyPair, BigDecimal[]> bestMatrixPrice) {
-        Map<CurrencyPair, BigDecimal> result = algoRunner.runAlgorithm(bestMatrixPrice);
+    private void trackArbitrageOpportunity() {
+        Map<CurrencyPair, BigDecimal[]> currencyPairBestValueMap = getBestValueCurrencyMatrix();
+        Map<CurrencyPair, BigDecimal> result = algoRunner.runAlgorithm(currencyPairBestValueMap);
         resultFormatter.processArbitrageRecord(result);
+
     }
+
+    public Map<CurrencyPair, BigDecimal[]> getBestValueCurrencyMatrix() {
+        return bestValueCurrencyMatrix;
+    }
+
 }
